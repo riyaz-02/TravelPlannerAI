@@ -1,0 +1,19 @@
+{
+  "summary": "...",
+  "bestTimeToVisit": "...",
+  "days": [
+    {
+      "day": 1,
+      "theme": "Coastal Drive & Arrival",
+      "morning": { "activity": "...", "estimatedCost": 500, "duration": "2 hrs" },
+      "afternoon": { ... },
+      "evening": { ... },
+      "food": [{ "meal": "Breakfast", "suggestion": "...", "cost": 200 }],
+      "accommodation": { "name": "...", "type": "mid-range", "cost": 2500 },
+      "tips": ["...", "..."]
+    }
+  ],
+  "budgetBreakdown": { "transport": 5000, "accommodation": 7500, ... },
+  "packingList": ["Sunscreen", "Beach wear", ...],
+  "localTips": ["Book Dudhsagar waterfall trip in advance", ...]
+}

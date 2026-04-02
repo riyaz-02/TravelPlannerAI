@@ -1,0 +1,229 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Mobile helpers ─────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .hidden-mobile { display: none !important; }
+  .show-mobile   { display: flex !important; }
+  /* stack feature grid to 1 col on mobile */
+  .feature-grid  { grid-template-columns: 1fr !important; }
+  /* stack steps on mobile */
+  .steps-grid    { grid-template-columns: 1fr !important; }
+}
+@media (min-width: 768px) {
+  .show-mobile { display: none !important; }
+}
+
+/* ─── Feature card hover ─────────────────────────────────────────── */
+.feature-card { transition: background 0.15s; }
+.feature-card:hover { background: #111113 !important; }
+
+/* ─── GLOBAL: force dark inputs everywhere ───────────────────────── */
+/* Prevents browser UA stylesheet from overriding with white */
+input, select, textarea {
+  background-color: #1c1c1f !important;
+  color: #fafafa !important;
+  border-color: #27272a !important;
+  -webkit-appearance: none;
+  appearance: none;
+}
+input::placeholder, textarea::placeholder { color: #52525b !important; }
+input:focus, select:focus, textarea:focus {
+  border-color: #3b82f6 !important;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.14);
+}
+select option { background: #18181b; color: #fafafa; }
+/* date picker calendar icon */
+input[type='date']::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
+
+
+
+
+/* ─── CSS Variables ──────────────────────────────────────────────── */
+:root {
+  --c-bg:       #0a0a0b;
+  --c-surface:  #111113;
+  --c-subtle:   #1c1c1f;
+  --c-border:   #27272a;
+  --c-border-2: #3f3f46;
+  --c-text-1:   #fafafa;
+  --c-text-2:   #a1a1aa;
+  --c-text-3:   #71717a;
+  --c-blue:     #3b82f6;
+  --c-blue-dim: rgba(59,130,246,.12);
+}
+
+/* ─── Base reset ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--c-bg);
+  color: var(--c-text-1);
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--c-border-2); }
+
+/* ─── Layout helpers ─────────────────────────────────────────────── */
+.container-page {
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+/* ─── Section card ───────────────────────────────────────────────── */
+.section-card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 14px;
+  padding: 22px;
+}
+
+/* ─── Form inputs — beat browser UA stylesheet ───────────────────── */
+.input-field {
+  display: block;
+  width: 100%;
+  padding: 9px 13px;
+  background: #1c1c1f !important;
+  border: 1px solid #27272a !important;
+  border-radius: 9px;
+  color: #fafafa !important;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.input-field::placeholder { color: #52525b !important; }
+.input-field:focus {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.14);
+}
+/* date / select / number inherits */
+input.input-field, select.input-field, textarea.input-field {
+  background: #1c1c1f !important;
+  color: #fafafa !important;
+}
+select.input-field option {
+  background: #18181b;
+  color: #fafafa;
+}
+
+/* ─── Spin keyframe (used in plan-trip Spinner) ──────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+
+/* ─── Buttons ────────────────────────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 22px;
+  background: var(--c-blue);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  border: none;
+  border-radius: 9px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+.btn-primary:hover  { background: #2563eb; box-shadow: 0 0 0 3px rgba(59,130,246,.2); }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.btn-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 22px;
+  background: transparent;
+  color: var(--c-text-2);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  border: 1px solid var(--c-border);
+  border-radius: 9px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 0.15s, color 0.15s;
+}
+.btn-outline:hover { border-color: var(--c-border-2); color: var(--c-text-1); }
+
+/* ─── Form label ─────────────────────────────────────────────────── */
+.form-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--c-text-3);
+  margin-bottom: 6px;
+}
+
+/* ─── Animations (fill: forwards only — never invisible) ─────────── */
+@keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Note: fill-mode is 'forwards' (not 'both') so elements are never hidden before animation starts */
+.anim-fade     { animation: fadeIn  0.3s ease forwards; }
+.anim-up       { animation: slideUp 0.35s ease forwards; }
+.anim-up-2     { animation: slideUp 0.35s 0.08s ease forwards; opacity: 0; }
+.anim-up-3     { animation: slideUp 0.35s 0.16s ease forwards; opacity: 0; }
+.anim-fade-down { animation: fadeDown 0.25s ease forwards; }
+
+/* Slide animations for plan-trip layout */
+@keyframes slideInRight { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes slideInLeft  { from { opacity: 0; transform: translateX(-30px); } to { opacity: 1; transform: translateX(0); } }
+.animate-slide-right { animation: slideInRight 0.4s cubic-bezier(0.22,1,0.36,1) forwards; }
+.animate-slide-left  { animation: slideInLeft  0.4s cubic-bezier(0.22,1,0.36,1) forwards; }
+.animate-fade-down   { animation: fadeDown 0.25s ease forwards; }
+.animate-fade-in     { animation: fadeIn 0.3s ease forwards; }
+.animate-slide-up    { animation: slideUp 0.35s ease forwards; }
+
+/* ─── Shimmer skeleton ───────────────────────────────────────────── */
+@keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+.animate-shimmer {
+  background: linear-gradient(90deg, var(--c-subtle) 25%, var(--c-border) 50%, var(--c-subtle) 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ─── Date picker dark-mode fix ──────────────────────────────────── */
+input[type='date']::-webkit-calendar-picker-indicator { filter: invert(1) opacity(0.35); cursor: pointer; }
+
+/* ─── MapLibre GL overrides ──────────────────────────────────────── */
+.maplibregl-popup-content {
+  background: var(--c-surface) !important;
+  color: var(--c-text-1) !important;
+  border: 1px solid var(--c-border) !important;
+  border-radius: 10px !important;
+  font-family: inherit !important;
+  font-size: 12px !important;
+  padding: 10px 14px !important;
+}
+.maplibregl-popup-tip { border-top-color: var(--c-surface) !important; }
+
+/* ─── Utilities ──────────────────────────────────────────────────── */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+.line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
