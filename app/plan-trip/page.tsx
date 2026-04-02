@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useSession, signIn } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import TripForm, { TripFormValues } from '@/components/TripForm';
@@ -17,10 +17,11 @@ import type { MapWaypoint, MapSegment } from '@/components/MapView';
 const MapView = dynamic(() => import('@/components/MapView'), { ssr: false, loading: () => <MapSkeleton /> });
 
 type LoadState = 'idle' | 'loading' | 'done' | 'error';
+type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 interface TravelAlert { type: string; severity: string; title: string; description: string; icon: string; source?: string; }
 interface TravelNews  { alerts: TravelAlert[]; summary: string; bestAdvice: string; }
-interface POI         { displayName: string; lat: number; lon: number; type?: string; }
+interface POI         { name: string; address: string; type: string; lat: number; lon: number; }
 
 interface MultiRouteResult {
   optimisedOrder: Array<{ name: string; lat: number; lon: number }>;
@@ -40,6 +41,15 @@ const SEV: Record<string, { bg: string; border: string; text: string }> = {
   info:   { bg: 'rgba(59,130,246,.1)', border: 'rgba(59,130,246,.3)', text: '#93c5fd' },
 };
 const COLORS = ['#3b82f6','#0ea5e9','#06b6d4','#10b981','#8b5cf6','#f59e0b','#ec4899'];
+
+/* ── POI type labels ──────────────────────────────────────────────────────── */
+const POI_TYPE_LABELS: Record<string, string> = {
+  hotel: '🏨 Hotel', hostel: '🛏 Hostel', motel: '🏩 Motel', guest_house: '🏡 Guesthouse',
+  attraction: '🎯 Attraction', museum: '🏛 Museum', viewpoint: '🌄 Viewpoint',
+  artwork: '🎨 Artwork', theme_park: '🎡 Theme Park', zoo: '🦁 Zoo',
+  monument: '🗿 Monument', ruins: '🏚 Ruins', gallery: '🖼 Gallery',
+  amphitheatre: '🎭 Theatre', fort: '🏰 Fort',
+};
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -61,21 +71,17 @@ function SignInRequired() {
   return (
     <div style={{ minHeight: 'calc(100vh - 52px)', background: '#0a0a0b', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
       <div style={{ maxWidth: 480, width: '100%', textAlign: 'center' }}>
-        {/* Icon */}
         <div style={{ width: 80, height: 80, borderRadius: 20, background: 'linear-gradient(135deg, rgba(59,130,246,.2), rgba(139,92,246,.2))', border: '1px solid rgba(59,130,246,.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 28px', fontSize: 36 }}>✈️</div>
-
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fafafa', letterSpacing: '-0.02em', marginBottom: 12 }}>Sign in to plan your trip</h1>
         <p style={{ fontSize: 15, color: '#71717a', lineHeight: 1.7, marginBottom: 32 }}>
           Create a free account to generate AI-powered itineraries, save your trip history, and access your travel analytics dashboard.
         </p>
-
-        {/* Features list */}
         <div style={{ background: '#111113', border: '1px solid #27272a', borderRadius: 14, padding: '20px 24px', marginBottom: 28, textAlign: 'left' }}>
           {[
-            { icon: '🤖', label: 'AI-generated itineraries',   sub: 'Powered by Gemini 2.5 Flash' },
-            { icon: '💾', label: 'Trip history saved to cloud', sub: 'Access from anywhere'          },
-            { icon: '📊', label: 'Personal analytics dashboard',sub: 'See your travel patterns'      },
-            { icon: '🗺️', label: 'Multi-stop route optimizer',  sub: 'TSP algorithm saves you km'   },
+            { icon: '🤖', label: 'AI-generated itineraries',    sub: 'Powered by Gemini 2.5 Flash' },
+            { icon: '💾', label: 'Trip history saved to cloud',  sub: 'Access from anywhere'         },
+            { icon: '📊', label: 'Personal analytics dashboard', sub: 'See your travel patterns'     },
+            { icon: '🗺️', label: 'Multi-stop route optimizer',   sub: 'TSP algorithm saves you km'  },
           ].map(({ icon, label, sub }) => (
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 0', borderBottom: '1px solid #1c1c1f' }}>
               <span style={{ fontSize: 20, width: 28, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
@@ -86,7 +92,6 @@ function SignInRequired() {
             </div>
           ))}
         </div>
-
         <button
           onClick={() => signIn('google', { callbackUrl: '/plan-trip' })}
           style={{
@@ -107,15 +112,13 @@ function SignInRequired() {
           </svg>
           Continue with Google
         </button>
-
-        <p style={{ marginTop: 16, fontSize: 12, color: '#3f3f46' }}>
-          Free forever · No credit card required
-        </p>
+        <p style={{ marginTop: 16, fontSize: 12, color: '#3f3f46' }}>Free forever · No credit card required</p>
       </div>
     </div>
   );
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
 export default function PlanTripPage() {
   const { data: session, status } = useSession();
 
@@ -140,20 +143,26 @@ export default function PlanTripPage() {
   const [hotels,         setHotels]         = useState<POI[]>([]);
   const [spots,          setSpots]          = useState<POI[]>([]);
 
+  const [saveState,      setSaveState]      = useState<SaveState>('idle');
+  const savedTripId = useRef<string | null>(null);
+
   const chatSessionId = useRef<string>('');
   const hasFetched    = useRef(false);
 
-  // ── fetchPOI must be defined before any early return ──────────────────────
-  const fetchPOI = useCallback(async (lat: number, lon: number, tag: string): Promise<POI[]> => {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(tag)}&format=json&limit=8&lat=${lat}&lon=${lon}&radius=20000`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'TravelPlannerAI/1.0' } });
-    if (!res.ok) return [];
+  /* ── Server-side POI proxy (avoids browser CORS) ─────────────────────── */
+  const fetchPOI = useCallback(async (lat: number, lon: number, mode: 'hotels' | 'spots'): Promise<POI[]> => {
+    const res = await fetch('/api/poi', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ lat, lon, mode }),
+    });
+    if (!res.ok) throw new Error(`POI API error ${res.status}`);
     const data = await res.json();
-    return data.map((item: { display_name: string; lat: string; lon: string; type?: string }) => ({
-      displayName: item.display_name, lat: parseFloat(item.lat), lon: parseFloat(item.lon), type: item.type,
-    }));
+    if (data.error) throw new Error(data.error);
+    return data.pois as POI[];
   }, []);
 
+  /* ── Main data loader ─────────────────────────────────────────────────── */
   const loadData = useCallback(async (trip: TripFormValues) => {
     if (!trip.fromCoords || !trip.toCoords) return;
 
@@ -163,7 +172,6 @@ export default function PlanTripPage() {
     setRouteState('loading'); setWeatherState('loading');
     setItineraryState('loading'); setNewsState('loading');
 
-    // ── Weather & news in parallel ─────────────────────────────────────────
     getWeather(trip.toCoords.lat, trip.toCoords.lon, 7)
       .then((w) => { setWeather(w); setWeatherState('done'); })
       .catch(() => setWeatherState('error'));
@@ -176,7 +184,6 @@ export default function PlanTripPage() {
       .then((d) => { setTravelNews(d); setNewsState('done'); })
       .catch(() => setNewsState('error'));
 
-    // ── Route (single or multi-stop) ───────────────────────────────────────
     let routeDistance: number | undefined;
     let routeDuration: number | undefined;
 
@@ -211,13 +218,56 @@ export default function PlanTripPage() {
       }
     }
 
-    // ── Itinerary (waits for route distance/duration) ──────────────────────
     generateItinerary({ ...trip, distance: routeDistance, duration: routeDuration })
       .then((it) => { setItinerary(it); setItineraryState('done'); })
       .catch((e: Error) => { setItineraryError(e.message); setItineraryState('error'); });
   }, []);
 
-  /* ── Auth guards (after all hooks so hook order is stable) ──────────────── */
+  /* ── Auto-save once itinerary is ready ────────────────────────────────── */
+  useEffect(() => {
+    if (itineraryState !== 'done' || !itinerary || !tripData || saveState !== 'idle') return;
+    if (!session?.user) return;
+
+    setSaveState('saving');
+    const payload = {
+      from:          tripData.from,
+      to:            tripData.to,
+      fromCoords:    tripData.fromCoords,
+      toCoords:      tripData.toCoords,
+      transport:     tripData.transport,
+      startDate:     tripData.startDate || undefined,
+      endDate:       tripData.endDate   || undefined,
+      budget:        tripData.budget    ? Number(tripData.budget) : undefined,
+      currency:      tripData.currency,
+      travelers:     tripData.travelers,
+      preferences:   tripData.preferences,
+      itineraryData: itinerary,
+      routeData:     routeResult,
+      weatherData:   weather,
+    };
+
+    fetch('/api/trips', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) {
+          console.error('[auto-save] Trip save failed:', d.error ?? r.status);
+          setSaveState('error');
+          return;
+        }
+        savedTripId.current = d.tripId ?? null;
+        setSaveState('saved');
+      })
+      .catch((err) => {
+        console.error('[auto-save] Network error:', err);
+        setSaveState('error');
+      });
+  }, [itineraryState, itinerary, tripData, saveState, session, routeResult, weather]);
+
+  /* ── Auth guards ──────────────────────────────────────────────────────── */
   if (status === 'loading') {
     return (
       <div style={{ minHeight: 'calc(100vh - 52px)', background: '#0a0a0b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -228,12 +278,8 @@ export default function PlanTripPage() {
       </div>
     );
   }
+  if (status === 'unauthenticated') return <SignInRequired />;
 
-  if (status === 'unauthenticated') {
-    return <SignInRequired />;
-  }
-
-  // Suppress unused variable warning — session available for future use
   void session;
 
   const handleSubmit = (values: TripFormValues) => {
@@ -256,7 +302,8 @@ export default function PlanTripPage() {
     setItinerary(null); setTravelNews(null); setHotels([]); setSpots([]);
     setRouteState('idle'); setWeatherState('idle'); setItineraryState('idle');
     setNewsState('idle'); setHotelsState('idle'); setSpotsState('idle');
-    setItineraryError(null);
+    setItineraryError(null); setSaveState('idle');
+    savedTripId.current = null;
   };
 
   const days = tripData?.startDate && tripData?.endDate
@@ -264,7 +311,6 @@ export default function PlanTripPage() {
     : null;
   const modeLabel = tripData?.transport === 'flight' ? 'Flight' : tripData?.transport === 'train' ? 'Train' : 'Road';
 
-  // ── Derived map props ────────────────────────────────────────────────────
   const mapWaypoints: MapWaypoint[] | undefined = multiRoute
     ? multiRoute.optimisedOrder.map((c, i) => ({ lat: c.lat, lon: c.lon, label: String(i + 1).padStart(2, '0'), name: c.name.split(',')[0] }))
     : undefined;
@@ -273,7 +319,41 @@ export default function PlanTripPage() {
     ? multiRoute.segments.map((s, i) => ({ geojson: s.geojson, color: COLORS[i % COLORS.length] }))
     : undefined;
 
-  // ── FORM ────────────────────────────────────────────────────────────────
+  /* ── Save status pill ─────────────────────────────────────────────────── */
+  const retrySave = () => {
+    if (!tripData || !itinerary) return;
+    setSaveState('idle');   // triggers the useEffect again
+  };
+
+  const SavePill = () => {
+    if (saveState === 'idle') return null;
+    if (saveState === 'saving') return (
+      <span style={{ fontSize: 12, padding: '4px 12px', borderRadius: 99, background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        ⏳ Saving to cloud…
+      </span>
+    );
+    if (saveState === 'saved') return (
+      <span style={{ fontSize: 12, padding: '4px 12px', borderRadius: 99, background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.25)', color: '#4ade80', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        ✓ Saved to Plan History
+      </span>
+    );
+    if (saveState === 'error') return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ fontSize: 12, padding: '4px 12px', borderRadius: 99, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          ⚠ Save failed
+        </span>
+        <button onClick={retrySave} style={{ fontSize: 11, background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', textAlign: 'left', padding: '2px 0' }}>
+          Retry save →
+        </button>
+        <span style={{ fontSize: 10, color: '#52525b', lineHeight: 1.4 }}>
+          If this keeps failing, sign out<br />and sign back in to refresh your session.
+        </span>
+      </div>
+    );
+    return null;
+  };
+
+  /* ── FORM ─────────────────────────────────────────────────────────────── */
   if (!submitted) {
     return (
       <div style={{ minHeight: '100vh', background: '#0a0a0b' }}>
@@ -303,7 +383,7 @@ export default function PlanTripPage() {
     );
   }
 
-  // ── RESULTS ─────────────────────────────────────────────────────────────
+  /* ── RESULTS ────────────────────────────────────────────────────────────── */
   return (
     <div style={{ display: 'flex', height: 'calc(100vh - 52px)', overflow: 'hidden', background: '#0a0a0b' }}>
 
@@ -322,6 +402,12 @@ export default function PlanTripPage() {
           {tripData!.budget && <Chip label={`${tripData!.currency} ${Number(tripData!.budget).toLocaleString()}`} />}
           {multiRoute && <Chip label={`${multiRoute.optimisedOrder.length} stops`} />}
         </div>
+
+        {/* Save status */}
+        <div style={{ marginBottom: 16 }}>
+          <SavePill />
+        </div>
+
         <div style={{ marginBottom: 20, paddingBottom: 20, borderBottom: '1px solid #1c1c1f' }}>
           <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#52525b', marginBottom: 12 }}>Details</p>
           {[
@@ -377,7 +463,7 @@ export default function PlanTripPage() {
             {routeState === 'error' && <p style={{ marginTop: 10, fontSize: 12, color: '#f59e0b', textAlign: 'center' }}>Route data unavailable — showing direct line.</p>}
           </Card>
 
-          {/* TSP Optimisation card (only when multi-stop) */}
+          {/* TSP optimisation */}
           {multiRoute && (
             <Card title="Route Optimisation — TSP Algorithm">
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
@@ -483,56 +569,145 @@ export default function PlanTripPage() {
             )}
           </Card>
 
-          {/* Explore */}
+          {/* ── Explore Near Destination ─────────────────────────────────── */}
           <Card title="Explore Near Destination">
-            <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
-              {[
-                { label: 'Hotels', state: hotelsState, set: setHotelsState, tag: 'hotel', setData: setHotels },
-                { label: 'Tourist Spots', state: spotsState, set: setSpotsState, tag: 'tourist attraction', setData: setSpots },
-              ].map(({ label, state, set, tag, setData }) => (
+            <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+              {([
+                { label: '🏨 Hotels',        mode: 'hotels' as const, state: hotelsState, set: setHotelsState, setData: setHotels },
+                { label: '🎯 Tourist Spots', mode: 'spots'  as const, state: spotsState,  set: setSpotsState,  setData: setSpots  },
+              ]).map(({ label, mode, state, set, setData }) => (
                 <button key={label}
                   onClick={async () => {
                     if (!tripData?.toCoords) return;
                     set('loading');
-                    try { setData(await fetchPOI(tripData.toCoords.lat, tripData.toCoords.lon, tag)); set('done'); }
-                    catch { set('error'); }
+                    try {
+                      const results = await fetchPOI(tripData.toCoords.lat, tripData.toCoords.lon, mode);
+                      setData(results);
+                      set(results.length > 0 ? 'done' : 'error');
+                    } catch {
+                      set('error');
+                    }
                   }}
                   disabled={state === 'loading'}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 9, background: 'transparent', border: '1px solid #27272a', color: '#a1a1aa', fontSize: 13, cursor: 'pointer', transition: 'border-color 0.15s, color 0.15s' }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '9px 18px',
+                    borderRadius: 9,
+                    background: state === 'done' ? 'rgba(59,130,246,0.1)' : 'transparent',
+                    border: state === 'done' ? '1px solid rgba(59,130,246,0.3)' : '1px solid #27272a',
+                    color: state === 'done' ? '#93c5fd' : '#a1a1aa',
+                    fontSize: 13, cursor: state === 'loading' ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.15s', fontFamily: 'inherit',
+                  }}
                 >
                   {state === 'loading' && <Spinner size={13} />}{label}
                 </button>
               ))}
+              <p style={{ fontSize: 12, color: '#52525b', alignSelf: 'center', marginLeft: 4 }}>
+                Click to search within 15 km of {tripData!.to.split(',')[0]}
+              </p>
             </div>
-            {[{ state: hotelsState, data: hotels, label: 'Hotels' }, { state: spotsState, data: spots, label: 'Tourist spots' }].map(({ state, data, label }) =>
-              state === 'done' && data.length > 0 ? (
-                <div key={label} style={{ marginBottom: 18 }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: '#71717a', marginBottom: 10 }}>{label} near {tripData!.to.split(',')[0]} <span style={{ color: '#3f3f46', fontWeight: 400 }}>({data.length} found)</span></p>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    {data.map((h, i) => (
-                      <div key={i} style={{ padding: '10px 12px', borderRadius: 9, background: '#18181b', border: '1px solid #27272a' }}>
-                        <p style={{ fontSize: 13, fontWeight: 500, color: '#fafafa', marginBottom: 2 }}>{h.displayName.split(',')[0]}</p>
-                        <p style={{ fontSize: 11, color: '#52525b' }}>{h.displayName.split(',').slice(1, 3).join(',').trim()}</p>
+
+            {/* Hotels results */}
+            {hotelsState === 'done' && hotels.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: '#71717a', marginBottom: 12 }}>
+                  Hotels &amp; Accommodation near {tripData!.to.split(',')[0]}{' '}
+                  <span style={{ color: '#3f3f46', fontWeight: 400 }}>({hotels.length} found)</span>
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+                  {hotels.map((h, i) => (
+                    <a
+                      key={i}
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(h.name)}&query_place_id=${h.lat},${h.lon}`}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{ textDecoration: 'none' }}
+                    >
+                      <div style={{
+                        padding: '12px 14px', borderRadius: 10, background: '#18181b',
+                        border: '1px solid #27272a', transition: 'border-color 0.15s, background 0.15s',
+                        cursor: 'pointer',
+                      }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'rgba(59,130,246,0.4)'; (e.currentTarget as HTMLDivElement).style.background = '#1c1c1f'; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = '#27272a'; (e.currentTarget as HTMLDivElement).style.background = '#18181b'; }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                          <p style={{ fontSize: 13, fontWeight: 600, color: '#fafafa', lineHeight: 1.3 }}>{h.name}</p>
+                          <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 99, background: 'rgba(59,130,246,0.12)', color: '#93c5fd', border: '1px solid rgba(59,130,246,0.2)', flexShrink: 0, marginLeft: 8 }}>
+                            {POI_TYPE_LABELS[h.type] ?? '🏨 Hotel'}
+                          </span>
+                        </div>
+                        {h.address && <p style={{ fontSize: 11, color: '#52525b', lineHeight: 1.4 }}>{h.address}</p>}
+                        <p style={{ fontSize: 10, color: '#3b82f6', marginTop: 6 }}>Open in Maps →</p>
                       </div>
-                    ))}
-                  </div>
+                    </a>
+                  ))}
                 </div>
-              ) : null
+              </div>
+            )}
+            {hotelsState === 'done' && hotels.length === 0 && (
+              <p style={{ fontSize: 13, color: '#52525b', marginBottom: 16 }}>No hotels found in the 15 km radius. Try a more central destination.</p>
+            )}
+            {hotelsState === 'error' && (
+              <p style={{ fontSize: 13, color: '#f59e0b', marginBottom: 16 }}>Could not fetch hotel data. Try again in a moment.</p>
+            )}
+
+            {/* Tourist Spots results */}
+            {spotsState === 'done' && spots.length > 0 && (
+              <div>
+                <p style={{ fontSize: 12, fontWeight: 600, color: '#71717a', marginBottom: 12 }}>
+                  Tourist Spots near {tripData!.to.split(',')[0]}{' '}
+                  <span style={{ color: '#3f3f46', fontWeight: 400 }}>({spots.length} found)</span>
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+                  {spots.map((s, i) => (
+                    <a
+                      key={i}
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.name)}`}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{ textDecoration: 'none' }}
+                    >
+                      <div style={{
+                        padding: '12px 14px', borderRadius: 10, background: '#18181b',
+                        border: '1px solid #27272a', transition: 'border-color 0.15s, background 0.15s', cursor: 'pointer',
+                      }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'rgba(139,92,246,0.4)'; (e.currentTarget as HTMLDivElement).style.background = '#1c1c1f'; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = '#27272a'; (e.currentTarget as HTMLDivElement).style.background = '#18181b'; }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                          <p style={{ fontSize: 13, fontWeight: 600, color: '#fafafa', lineHeight: 1.3 }}>{s.name}</p>
+                          <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 99, background: 'rgba(139,92,246,0.12)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.2)', flexShrink: 0, marginLeft: 8 }}>
+                            {POI_TYPE_LABELS[s.type] ?? '🎯 Spot'}
+                          </span>
+                        </div>
+                        {s.address && <p style={{ fontSize: 11, color: '#52525b', lineHeight: 1.4 }}>{s.address}</p>}
+                        <p style={{ fontSize: 10, color: '#8b5cf6', marginTop: 6 }}>Open in Maps →</p>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+            {spotsState === 'done' && spots.length === 0 && (
+              <p style={{ fontSize: 13, color: '#52525b' }}>No tourist spots found nearby. Try a different destination.</p>
+            )}
+            {spotsState === 'error' && (
+              <p style={{ fontSize: 13, color: '#f59e0b' }}>Could not fetch tourist spots. Try again in a moment.</p>
             )}
           </Card>
 
-          {/* AI Chat Panel — requires sign-in */}
-          {itinerary && (
-            <ChatPanel
-              sessionId={chatSessionId.current}
-              currentItinerary={itinerary}
-              tripContext={tripData as unknown as Record<string, unknown>}
-              onItineraryUpdate={(updated) => setItinerary(updated)}
-            />
-          )}
-
         </div>
       </main>
+
+      {/* Floating AI chatbot — shown once itinerary is ready */}
+      {itinerary && (
+        <ChatPanel
+          sessionId={chatSessionId.current}
+          tripId={savedTripId.current}
+          currentItinerary={itinerary}
+          tripContext={tripData as unknown as Record<string, unknown>}
+          onItineraryUpdate={(updated) => setItinerary(updated)}
+        />
+      )}
     </div>
   );
 }

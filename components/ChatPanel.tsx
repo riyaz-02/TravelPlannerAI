@@ -1,270 +1,472 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useSession, signIn } from 'next-auth/react';
 import { Itinerary } from '@/services/gemini';
 
-interface Message { role: 'user' | 'assistant'; text: string; ts: Date; }
+interface Message {
+  role: 'user' | 'assistant';
+  text: string;
+  ts: Date;
+  pendingItinerary?: Itinerary;  // holds proposed update waiting for confirmation
+  confirmed?: boolean;            // true once user confirmed the update
+}
 
 interface Props {
   sessionId:         string;
+  tripId?:           string | null;   // saved trip _id from MongoDB (for DB updates)
   currentItinerary:  Itinerary | null;
   tripContext:        Record<string, unknown>;
   onItineraryUpdate: (it: Itinerary) => void;
 }
 
 const SUGGESTIONS = [
+  'What should I pack for this trip?',
   'Make Day 1 more adventurous',
   'Add local food experiences each day',
-  'Replace hotels with budget stays',
-  'What should I pack for this trip?',
-  'Add a rest day in between',
+  'Suggest budget-friendly accommodation',
+  'Add a rest/leisure day',
+  'What are the must-see spots?',
 ];
 
-export default function ChatPanel({ sessionId, currentItinerary, tripContext, onItineraryUpdate }: Props) {
-  const { data: session } = useSession();
-  const [open, setOpen]     = useState(false);
-  const [msgs, setMsgs]     = useState<Message[]>([]);
-  const [input, setInput]   = useState('');
-  const [busy, setBusy]     = useState(false);
-  const [updated, setUpdated] = useState(false);
-  const [unread, setUnread]   = useState(0);
-  const endRef  = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+// Build a plain-text diff summary between old and proposed itinerary
+function buildChangeSummary(oldIt: Itinerary | null, newIt: Itinerary): string[] {
+  const lines: string[] = [];
+  if (!oldIt) return lines;
 
+  // Budget change
+  const oldTotal = oldIt.budgetBreakdown?.total ?? 0;
+  const newTotal = newIt.budgetBreakdown?.total ?? 0;
+  if (oldTotal !== newTotal) {
+    const delta = newTotal - oldTotal;
+    const sign  = delta > 0 ? '+' : '';
+    lines.push(`💰 Budget: ₹${oldTotal.toLocaleString()} → ₹${newTotal.toLocaleString()} (${sign}₹${Math.abs(delta).toLocaleString()})`);
+  }
+
+  // Changed days
+  const oldDays = oldIt.days ?? [];
+  const newDays = newIt.days ?? [];
+  newDays.forEach((nd, i) => {
+    const od = oldDays[i];
+    if (!od) { lines.push(`📅 Day ${nd.day}: New day added — ${nd.theme}`); return; }
+    const changes: string[] = [];
+    if (od.theme !== nd.theme) changes.push(`Theme: "${nd.theme}"`);
+    if (od.morning?.activity !== nd.morning?.activity) changes.push(`Morning → ${nd.morning?.activity}`);
+    if (od.afternoon?.activity !== nd.afternoon?.activity) changes.push(`Afternoon → ${nd.afternoon?.activity}`);
+    if (od.evening?.activity !== nd.evening?.activity) changes.push(`Evening → ${nd.evening?.activity}`);
+    if (od.accommodation?.name !== nd.accommodation?.name) changes.push(`Stay: ${nd.accommodation?.name}`);
+    if (od.accommodation?.cost !== nd.accommodation?.cost) changes.push(`Hotel cost: ₹${nd.accommodation?.cost}`);
+    if (changes.length) lines.push(`📅 Day ${nd.day}: ${changes.slice(0, 3).join(' · ')}`);
+  });
+
+  // Summary change
+  if (oldIt.summary !== newIt.summary) {
+    lines.push(`📝 Summary updated`);
+  }
+
+  return lines.slice(0, 6); // cap at 6 lines
+}
+
+export default function ChatPanel({
+  sessionId,
+  tripId,
+  currentItinerary,
+  tripContext,
+  onItineraryUpdate,
+}: Props) {
+  const { data: session } = useSession();
+  const [open,   setOpen]   = useState(false);
+  const [msgs,   setMsgs]   = useState<Message[]>([]);
+  const [input,  setInput]  = useState('');
+  const [busy,   setBusy]   = useState(false);
+  const [unread, setUnread] = useState(0);
+  const endRef   = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Track conversation history for stateless API
+  const historyRef = useRef<Array<{ role: 'user' | 'assistant'; text: string }>>([]);
+
+  // Scroll to bottom + focus input when panel opens
   useEffect(() => {
     if (open) {
       setUnread(0);
-      endRef.current?.scrollIntoView({ behavior: 'smooth' });
-      setTimeout(() => inputRef.current?.focus(), 150);
+      setTimeout(() => {
+        endRef.current?.scrollIntoView({ behavior: 'smooth' });
+        inputRef.current?.focus();
+      }, 100);
     }
+  }, [open]);
+
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs, open]);
 
-  const send = async (text: string) => {
+  // ── Send message (stateless — passes full history each time) ─────────────
+  const send = useCallback(async (text: string) => {
     if (!text.trim() || busy) return;
     setInput('');
     const userMsg: Message = { role: 'user', text, ts: new Date() };
     setMsgs((p) => [...p, userMsg]);
     setBusy(true);
+
+    // Snapshot history BEFORE adding the current turn
+    const historySnapshot = [...historyRef.current];
+
     try {
-      const res  = await fetch('/api/chat', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, userMessage: text, currentItinerary, tripContext }),
+        body: JSON.stringify({
+          userMessage:      text,
+          currentItinerary,
+          tripContext,
+          tripId:           tripId ?? null,
+          history:          historySnapshot,
+        }),
       });
+
       const data = await res.json();
-      const replyText = res.ok ? data.reply : (data.error ?? 'Error occurred.');
-      setMsgs((p) => [...p, { role: 'assistant', text: replyText, ts: new Date() }]);
-      if (!open) setUnread((n) => n + 1);
-      if (res.ok && data.updatedItinerary) {
-        onItineraryUpdate(data.updatedItinerary as Itinerary);
-        setUpdated(true);
-        setTimeout(() => setUpdated(false), 4000);
+
+      if (!res.ok) {
+        setMsgs((p) => [...p, {
+          role: 'assistant',
+          text: data.error ?? 'Sorry, something went wrong. Please try again.',
+          ts: new Date(),
+        }]);
+        return;
       }
-    } catch {
-      setMsgs((p) => [...p, { role: 'assistant', text: 'Network error. Please try again.', ts: new Date() }]);
+
+      const replyText        = data.reply as string;
+      const updatedItinerary = data.updatedItinerary as Itinerary | null;
+
+      // Persist to local history for next turn
+      historyRef.current = [
+        ...historySnapshot,
+        { role: 'user',      text },
+        { role: 'assistant', text: replyText },
+      ];
+
+      const assistantMsg: Message = {
+        role:             'assistant',
+        text:             replyText,
+        ts:               new Date(),
+        pendingItinerary: updatedItinerary ?? undefined,
+      };
+
+      setMsgs((p) => [...p, assistantMsg]);
+      if (!open) setUnread((n) => n + 1);
+
+    } catch (err) {
+      setMsgs((p) => [...p, {
+        role: 'assistant',
+        text: `Network error: ${err instanceof Error ? err.message : 'Please check your connection.'}`,
+        ts: new Date(),
+      }]);
     } finally {
       setBusy(false);
     }
+  }, [busy, currentItinerary, tripContext, tripId, open]);
+
+  // ── Confirm + apply itinerary update ─────────────────────────────────────
+  const confirmUpdate = (msgIndex: number, itinerary: Itinerary) => {
+    onItineraryUpdate(itinerary);
+    setMsgs((p) =>
+      p.map((m, i) =>
+        i === msgIndex
+          ? { ...m, confirmed: true, pendingItinerary: undefined }
+          : m,
+      ),
+    );
   };
 
-  const formatTime = (d: Date) =>
+  // ── Dismiss a proposed update ────────────────────────────────────────────
+  const dismissUpdate = (msgIndex: number) => {
+    setMsgs((p) =>
+      p.map((m, i) =>
+        i === msgIndex ? { ...m, pendingItinerary: undefined } : m,
+      ),
+    );
+  };
+
+  const fmtTime = (d: Date) =>
     d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-  /* ── Floating button ─────────────────────────────────────────────── */
+  /* ── Floating button ───────────────────────────────────────────────────── */
   const fab = (
     <button
       onClick={() => setOpen(true)}
       title="Refine with AI"
       style={{
         position: 'fixed', bottom: 28, right: 28, zIndex: 1000,
-        width: 56, height: 56, borderRadius: '50%',
-        background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+        width: 58, height: 58, borderRadius: '50%',
+        background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)',
         border: 'none', cursor: 'pointer',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        boxShadow: '0 8px 32px rgba(59,130,246,0.45), 0 2px 8px rgba(0,0,0,0.4)',
+        boxShadow: '0 8px 32px rgba(59,130,246,0.5), 0 2px 8px rgba(0,0,0,0.4)',
         transition: 'transform 0.2s, box-shadow 0.2s',
         animation: 'fabIn 0.4s cubic-bezier(0.22,1,0.36,1) both',
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.transform = 'scale(1.08)';
-        e.currentTarget.style.boxShadow = '0 12px 40px rgba(59,130,246,0.55), 0 4px 12px rgba(0,0,0,0.4)';
+        e.currentTarget.style.transform = 'scale(1.1)';
+        e.currentTarget.style.boxShadow = '0 12px 40px rgba(59,130,246,0.65), 0 4px 12px rgba(0,0,0,0.4)';
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.transform = 'scale(1)';
-        e.currentTarget.style.boxShadow = '0 8px 32px rgba(59,130,246,0.45), 0 2px 8px rgba(0,0,0,0.4)';
+        e.currentTarget.style.boxShadow = '0 8px 32px rgba(59,130,246,0.5), 0 2px 8px rgba(0,0,0,0.4)';
       }}
     >
-      {/* Robot icon */}
       <svg width="26" height="26" viewBox="0 0 24 24" fill="white">
-        <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v2a2 2 0 0 1-2 2h-1v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-1H5a2 2 0 0 1-2-2v-2a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2zm-4 9a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm8 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-4 4c-1.5 0-2.75-.6-3.5-1.5C9 14.88 9 15.44 9 16h6c0-.56 0-1.12-.5-1.5-.75.9-2 1.5-3.5 1.5z"/>
+        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
       </svg>
-      {/* Unread badge */}
       {unread > 0 && (
         <span style={{
-          position: 'absolute', top: -2, right: -2,
-          width: 18, height: 18, borderRadius: '50%',
+          position: 'absolute', top: -3, right: -3,
+          minWidth: 20, height: 20, borderRadius: 10,
           background: '#ef4444', border: '2px solid #0a0a0b',
-          fontSize: 9, fontWeight: 700, color: '#fff',
+          fontSize: 10, fontWeight: 700, color: '#fff',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '0 4px',
         }}>{unread}</span>
       )}
     </button>
   );
 
-  /* ── Chat panel overlay ───────────────────────────────────────────── */
+  /* ── Chat panel ────────────────────────────────────────────────────────── */
   const panel = (
     <div style={{
       position: 'fixed', bottom: 28, right: 28, zIndex: 1001,
-      width: 'min(400px, calc(100vw - 32px)',
-      height: 580,
+      width: 'min(420px, calc(100vw - 24px))',
+      height: 600,
       display: 'flex', flexDirection: 'column',
-      background: 'rgba(14,14,16,0.96)',
-      backdropFilter: 'blur(24px)',
-      WebkitBackdropFilter: 'blur(24px)',
-      border: '1px solid rgba(59,130,246,0.2)',
-      borderRadius: 20,
-      boxShadow: '0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)',
-      animation: 'panelSlideUp 0.35s cubic-bezier(0.22,1,0.36,1) both',
+      background: 'rgba(11,11,13,0.97)',
+      backdropFilter: 'blur(28px)',
+      WebkitBackdropFilter: 'blur(28px)',
+      border: '1px solid rgba(99,102,241,0.2)',
+      borderRadius: 22,
+      boxShadow: '0 32px 90px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04), inset 0 1px 0 rgba(255,255,255,0.06)',
+      animation: 'panelSlideUp 0.3s cubic-bezier(0.22,1,0.36,1) both',
       overflow: 'hidden',
     }}>
 
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '16px 18px',
-        background: 'linear-gradient(135deg, rgba(59,130,246,0.12), rgba(139,92,246,0.08))',
-        borderBottom: '1px solid rgba(59,130,246,0.15)',
+        padding: '14px 16px',
+        background: 'linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.07))',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
         flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
-            width: 36, height: 36, borderRadius: 10,
+            width: 38, height: 38, borderRadius: 11,
             background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0, boxShadow: '0 4px 12px rgba(59,130,246,0.3)',
+            boxShadow: '0 4px 14px rgba(59,130,246,0.35)',
           }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-              <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7v2a2 2 0 0 1-2 2h-1v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-1H5a2 2 0 0 1-2-2v-2a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2zm-4 9a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm8 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-4 4c-1.5 0-2.75-.6-3.5-1.5C9 14.88 9 15.44 9 16h6c0-.56 0-1.12-.5-1.5-.75.9-2 1.5-3.5 1.5z"/>
+              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
             </svg>
           </div>
           <div>
-            <p style={{ fontSize: 14, fontWeight: 700, color: '#fafafa', margin: 0, lineHeight: 1.2 }}>Refine with AI</p>
+            <p style={{ fontSize: 14, fontWeight: 700, color: '#fafafa', margin: 0 }}>Refine with AI</p>
             <p style={{ fontSize: 11, color: '#6366f1', margin: 0 }}>
-              {busy ? '⚡ Thinking…' : msgs.length > 0 ? `${Math.floor(msgs.length / 2)} exchange${msgs.length > 2 ? 's' : ''}` : 'Gemini-powered chat'}
+              {busy ? '⚡ Thinking…' : msgs.length > 0 ? `${msgs.filter(m => m.role === 'user').length} message${msgs.filter(m => m.role === 'user').length !== 1 ? 's' : ''} sent` : 'Powered by Gemini AI'}
             </p>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {updated && (
-            <span style={{
-              fontSize: 11, color: '#4ade80',
-              background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.25)',
-              padding: '3px 9px', borderRadius: 99, fontWeight: 600,
-            }}>✓ Updated</span>
-          )}
-          <button
-            onClick={() => setOpen(false)}
-            style={{
-              width: 30, height: 30, borderRadius: 8,
-              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: '#71717a', transition: 'background 0.15s, color 0.15s',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fafafa'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#71717a'; }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
+        <button
+          onClick={() => setOpen(false)}
+          style={{
+            width: 32, height: 32, borderRadius: 9,
+            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#71717a', transition: 'all 0.15s',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fafafa'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#71717a'; }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </div>
 
-      {/* Body */}
+      {/* ── Body ───────────────────────────────────────────────────────── */}
       {!session ? (
         /* Not signed in */
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', flexDirection: 'column', gap: 16 }}>
-          <div style={{ width: 64, height: 64, borderRadius: 16, background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>🔒</div>
-          <p style={{ fontSize: 15, fontWeight: 600, color: '#fafafa', textAlign: 'center', margin: 0 }}>Sign in to chat</p>
-          <p style={{ fontSize: 13, color: '#71717a', textAlign: 'center', lineHeight: 1.6, margin: 0 }}>Use AI chat to refine your itinerary in real-time with Gemini.</p>
-          <button
-            onClick={() => signIn('google')}
-            style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', border: 'none', borderRadius: 10, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
-          >Sign in with Google</button>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 28, gap: 16, textAlign: 'center' }}>
+          <div style={{ width: 68, height: 68, borderRadius: 18, background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30 }}>🔒</div>
+          <div>
+            <p style={{ fontSize: 16, fontWeight: 700, color: '#fafafa', marginBottom: 8 }}>Sign in to chat</p>
+            <p style={{ fontSize: 13, color: '#71717a', lineHeight: 1.6 }}>Chat with Gemini AI to refine your itinerary in real-time.</p>
+          </div>
+          <button onClick={() => signIn('google')} style={{ padding: '11px 28px', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', border: 'none', borderRadius: 11, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+            Sign in with Google
+          </button>
         </div>
       ) : (
         <>
-          {/* Messages */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {/* Welcome state */}
+          {/* Messages scrollable area */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 14px 6px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+            {/* Welcome / Suggestions */}
             {msgs.length === 0 && (
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ padding: '12px 14px', borderRadius: 12, background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', marginBottom: 14 }}>
-                  <p style={{ fontSize: 13, color: '#93c5fd', fontWeight: 600, marginBottom: 4 }}>👋 Hello!</p>
-                  <p style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.6, margin: 0 }}>
-                    I&apos;ve read your full itinerary. Ask me anything to refine your trip plan!
+              <div>
+                <div style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.15)', marginBottom: 14 }}>
+                  <p style={{ fontSize: 13, color: '#a5b4fc', fontWeight: 600, marginBottom: 4 }}>👋 Hi! I&apos;m your travel AI</p>
+                  <p style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.65, margin: 0 }}>
+                    I have your full itinerary loaded. Ask me anything — packing tips, activity changes, budget advice, or local recommendations!
                   </p>
                 </div>
-                <p style={{ fontSize: 11, color: '#4b5563', marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Try asking:</p>
+                <p style={{ fontSize: 11, color: '#4b5563', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Quick questions:</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                   {SUGGESTIONS.map((s) => (
                     <button key={s} onClick={() => send(s)} style={{
                       textAlign: 'left', padding: '8px 12px',
                       background: 'rgba(255,255,255,0.03)',
                       border: '1px solid rgba(255,255,255,0.07)',
-                      borderRadius: 9, color: '#9ca3af',
-                      fontSize: 12, cursor: 'pointer', transition: 'all 0.15s', lineHeight: 1.4,
+                      borderRadius: 10, color: '#9ca3af',
+                      fontSize: 12, cursor: 'pointer', transition: 'all 0.15s',
                     }}
-                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.4)'; e.currentTarget.style.color = '#c4b5fd'; e.currentTarget.style.background = 'rgba(99,102,241,0.06)'; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.4)'; e.currentTarget.style.color = '#c4b5fd'; e.currentTarget.style.background = 'rgba(99,102,241,0.07)'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = '#9ca3af'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
-                    >
-                      ✦ {s}
-                    </button>
+                    >✦ {s}</button>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Messages */}
+            {/* Message list */}
             {msgs.map((m, i) => (
               <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start', gap: 4 }}>
+                {/* Bubble */}
                 <div style={{
-                  maxWidth: '86%', padding: '9px 13px',
-                  borderRadius: m.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                  maxWidth: '88%',
+                  padding: '10px 14px',
+                  borderRadius: m.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                   background: m.role === 'user'
                     ? 'linear-gradient(135deg, #3b82f6, #6366f1)'
-                    : 'rgba(255,255,255,0.06)',
-                  border: m.role === 'assistant' ? '1px solid rgba(255,255,255,0.08)' : 'none',
-                  fontSize: 13, color: '#f1f5f9', lineHeight: 1.65,
+                    : m.confirmed
+                    ? 'rgba(74,222,128,0.07)'
+                    : 'rgba(255,255,255,0.05)',
+                  border: m.role === 'assistant'
+                    ? m.confirmed
+                      ? '1px solid rgba(74,222,128,0.2)'
+                      : '1px solid rgba(255,255,255,0.08)'
+                    : 'none',
+                  fontSize: 13, color: '#f1f5f9', lineHeight: 1.7,
                   whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                }}>{m.text}</div>
-                <span style={{ fontSize: 10, color: '#374151', paddingLeft: m.role === 'user' ? 0 : 4, paddingRight: m.role === 'user' ? 4 : 0 }}>{formatTime(m.ts)}</span>
+                }}>
+                  {m.confirmed && (
+                    <p style={{ fontSize: 11, color: '#4ade80', fontWeight: 600, marginBottom: 6 }}>✓ Itinerary updated in app</p>
+                  )}
+                  {m.text}
+                </div>
+
+                {/* Timestamp */}
+                <span style={{ fontSize: 10, color: '#374151', paddingLeft: m.role === 'user' ? 0 : 4, paddingRight: m.role === 'user' ? 4 : 0 }}>
+                  {fmtTime(m.ts)}
+                </span>
+
+                {/* ── Confirmation card with change summary ──────────── */}
+                {m.role === 'assistant' && m.pendingItinerary && !m.confirmed && (() => {
+                  const diff = buildChangeSummary(currentItinerary, m.pendingItinerary);
+                  return (
+                    <div style={{
+                      width: '100%', maxWidth: '96%',
+                      background: 'linear-gradient(135deg, rgba(59,130,246,0.05), rgba(99,102,241,0.04))',
+                      border: '1px solid rgba(99,102,241,0.28)',
+                      borderRadius: 14, padding: '14px',
+                      marginTop: 6,
+                    }}>
+                      {/* Card header */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: diff.length > 0 ? 10 : 12 }}>
+                        <span style={{
+                          width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                          background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13,
+                        }}>✏️</span>
+                        <div>
+                          <p style={{ fontSize: 13, fontWeight: 700, color: '#c4b5fd', margin: 0 }}>Proposed itinerary changes</p>
+                          <p style={{ fontSize: 10, color: '#6b7280', margin: 0 }}>
+                            {tripId ? 'Will update your trip in Plan History too' : 'Review before applying'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Change diff list */}
+                      {diff.length > 0 && (
+                        <div style={{
+                          background: 'rgba(0,0,0,0.25)', borderRadius: 9,
+                          padding: '10px 12px', marginBottom: 12,
+                          border: '1px solid rgba(255,255,255,0.05)',
+                        }}>
+                          {diff.map((line, li) => (
+                            <div key={li} style={{
+                              display: 'flex', alignItems: 'flex-start', gap: 8,
+                              paddingBottom: li < diff.length - 1 ? 6 : 0,
+                              marginBottom: li < diff.length - 1 ? 6 : 0,
+                              borderBottom: li < diff.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                            }}>
+                              <span style={{ fontSize: 11, color: '#818cf8', flexShrink: 0, marginTop: 1 }}>→</span>
+                              <span style={{ fontSize: 11, color: '#a1a1aa', lineHeight: 1.5 }}>{line}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Buttons */}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => confirmUpdate(i, m.pendingItinerary!)}
+                          style={{
+                            flex: 1, padding: '9px 0',
+                            background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
+                            border: 'none', borderRadius: 9,
+                            color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                            transition: 'opacity 0.15s', letterSpacing: '0.01em',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.88')}
+                          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                        >✓ Apply changes</button>
+                        <button
+                          onClick={() => dismissUpdate(i)}
+                          style={{
+                            padding: '9px 16px',
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            borderRadius: 9, color: '#71717a',
+                            fontSize: 12, cursor: 'pointer', transition: 'all 0.15s',
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#a1a1aa'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = '#71717a'; }}
+                        >Keep current</button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             ))}
 
             {/* Typing indicator */}
             {busy && (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                <div style={{ padding: '10px 14px', borderRadius: '14px 14px 14px 4px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: 5, alignItems: 'center' }}>
-                  {[0, 1, 2].map((i) => (
-                    <div key={i} style={{
-                      width: 6, height: 6, borderRadius: '50%',
-                      background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-                      animation: `chatBounce 1.2s ${i * 0.18}s infinite`,
-                    }} />
+              <div style={{ display: 'flex', gap: 4, paddingLeft: 4, alignItems: 'center' }}>
+                <div style={{ padding: '10px 14px', borderRadius: '16px 16px 16px 4px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: 5 }}>
+                  {[0, 1, 2].map((j) => (
+                    <div key={j} style={{ width: 7, height: 7, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', animation: `chatBounce 1.2s ${j * 0.18}s infinite` }} />
                   ))}
                 </div>
+                <span style={{ fontSize: 11, color: '#4b5563' }}>AI is thinking…</span>
               </div>
             )}
             <div ref={endRef} />
           </div>
 
-          {/* Input */}
+          {/* ── Input bar ─────────────────────────────────────────────── */}
           <div style={{
-            padding: '12px 14px',
+            padding: '10px 12px 12px',
             borderTop: '1px solid rgba(255,255,255,0.06)',
-            background: 'rgba(0,0,0,0.2)',
+            background: 'rgba(0,0,0,0.25)',
             flexShrink: 0,
           }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
@@ -273,15 +475,16 @@ export default function ChatPanel({ sessionId, currentItinerary, tripContext, on
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
-                placeholder="e.g. Make Day 2 more adventurous…"
+                placeholder="Ask about your trip or request changes…"
                 disabled={busy}
                 style={{
                   flex: 1, padding: '10px 14px',
                   background: 'rgba(255,255,255,0.05)',
                   border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: 11, color: '#f1f5f9',
+                  borderRadius: 12, color: '#f1f5f9',
                   fontSize: 13, fontFamily: 'inherit', outline: 'none',
                   transition: 'border-color 0.15s',
+                  resize: 'none',
                 }}
                 onFocus={(e) => (e.target.style.borderColor = 'rgba(99,102,241,0.5)')}
                 onBlur={(e) => (e.target.style.borderColor = 'rgba(255,255,255,0.1)')}
@@ -290,14 +493,17 @@ export default function ChatPanel({ sessionId, currentItinerary, tripContext, on
                 onClick={() => send(input)}
                 disabled={busy || !input.trim()}
                 style={{
-                  width: 40, height: 40, flexShrink: 0,
-                  borderRadius: 11,
+                  width: 42, height: 42, flexShrink: 0,
+                  borderRadius: 12,
                   background: busy || !input.trim()
-                    ? 'rgba(99,102,241,0.2)'
+                    ? 'rgba(99,102,241,0.15)'
                     : 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-                  border: 'none', cursor: busy || !input.trim() ? 'not-allowed' : 'pointer',
+                  border: '1px solid',
+                  borderColor: busy || !input.trim() ? 'rgba(99,102,241,0.2)' : 'transparent',
+                  cursor: busy || !input.trim() ? 'not-allowed' : 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  transition: 'all 0.15s', boxShadow: busy || !input.trim() ? 'none' : '0 4px 12px rgba(59,130,246,0.3)',
+                  transition: 'all 0.15s',
+                  boxShadow: busy || !input.trim() ? 'none' : '0 4px 14px rgba(59,130,246,0.35)',
                 }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -305,8 +511,8 @@ export default function ChatPanel({ sessionId, currentItinerary, tripContext, on
                 </svg>
               </button>
             </div>
-            <p style={{ fontSize: 10, color: '#374151', marginTop: 8, textAlign: 'center' }}>
-              Powered by Gemini · Press Enter to send
+            <p style={{ fontSize: 10, color: '#3f3f46', marginTop: 8, textAlign: 'center' }}>
+              Powered by Gemini 2.5 Flash · Press Enter to send
             </p>
           </div>
         </>
@@ -318,7 +524,7 @@ export default function ChatPanel({ sessionId, currentItinerary, tripContext, on
     <>
       <style>{`
         @keyframes fabIn { from { transform: scale(0) translateY(20px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
-        @keyframes panelSlideUp { from { transform: translateY(32px) scale(0.97); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+        @keyframes panelSlideUp { from { transform: translateY(28px) scale(0.97); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
         @keyframes chatBounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
       `}</style>
       {open ? panel : fab}

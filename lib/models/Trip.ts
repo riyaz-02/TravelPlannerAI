@@ -1,19 +1,20 @@
 import { Schema, model, models } from 'mongoose';
 
+const CoordsSchema = new Schema(
+  { lat: { type: Number }, lon: { type: Number } },
+  { _id: false },
+);
+
 const TripSchema = new Schema(
   {
     userId:    { type: String, required: true, index: true },
-    title:     { type: String, default: '' },          // e.g. "Delhi → Goa"
+    title:     { type: String, default: '' },
+
     from:      { type: String, required: true },
     to:        { type: String, required: true },
-    fromCoords: {
-      lat: { type: Number, required: true },
-      lon: { type: Number, required: true },
-    },
-    toCoords: {
-      lat: { type: Number, required: true },
-      lon: { type: Number, required: true },
-    },
+    fromCoords: { type: CoordsSchema },   // optional — not all transports have coords
+    toCoords:   { type: CoordsSchema },
+
     transport:   { type: String, default: 'driving-car' },
     startDate:   { type: Date },
     endDate:     { type: Date },
@@ -21,14 +22,18 @@ const TripSchema = new Schema(
     currency:    { type: String, default: 'INR' },
     travelers:   { type: Number, default: 1 },
     preferences: { type: [String], default: [] },
-    // Cached API results — stored as flexible Mixed so any shape is accepted
+
+    // Full Gemini itinerary + cached API results
+    itineraryData: { type: Schema.Types.Mixed },
     routeData:     { type: Schema.Types.Mixed },
     weatherData:   { type: Schema.Types.Mixed },
-    itineraryData: { type: Schema.Types.Mixed },   // full Itinerary object from Gemini
     newsData:      { type: Schema.Types.Mixed },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
+
+// Index for fast user history queries
+TripSchema.index({ userId: 1, createdAt: -1 });
 
 const Trip = models.Trip || model('Trip', TripSchema);
 export default Trip;
