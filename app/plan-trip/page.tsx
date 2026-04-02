@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, Suspense } from 'react';
 import { useSession, signIn } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import TripForm, { TripFormValues } from '@/components/TripForm';
 import { getRoute, RouteResult } from '@/services/openroute';
@@ -119,12 +120,16 @@ function SignInRequired() {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-export default function PlanTripPage() {
+function PlanTripPageInner() {
   const { data: session, status } = useSession();
+  const searchParams = useSearchParams();
+  const tripId = searchParams.get('tripId');
 
   const [submitted,      setSubmitted]      = useState(false);
   const [tripData,       setTripData]       = useState<TripFormValues | null>(null);
   const [formLoading,    setFormLoading]    = useState(false);
+  const [restoring,      setRestoring]      = useState(false);    // loading saved trip
+  const [restoreError,   setRestoreError]   = useState<string | null>(null);
 
   const [routeState,     setRouteState]     = useState<LoadState>('idle');
   const [weatherState,   setWeatherState]   = useState<LoadState>('idle');
@@ -148,6 +153,70 @@ export default function PlanTripPage() {
 
   const chatSessionId = useRef<string>('');
   const hasFetched    = useRef(false);
+
+  /* ── Restore saved trip from ?tripId= param ───────────────────────────── */
+  useEffect(() => {
+    if (!tripId || hasFetched.current || status !== 'authenticated') return;
+    hasFetched.current = true;
+    setRestoring(true);
+    setRestoreError(null);
+
+    fetch(`/api/trips/${tripId}`)
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? 'Failed to load trip');
+        return d.trip;
+      })
+      .then((t) => {
+        // Reconstruct TripFormValues from the saved trip document
+        const values: TripFormValues = {
+          from:        t.from,
+          to:          t.to,
+          fromCoords:  t.fromCoords  ?? null,
+          toCoords:    t.toCoords    ?? null,
+          transport:   t.transport   ?? 'driving-car',
+          startDate:   t.startDate   ? new Date(t.startDate).toISOString().slice(0, 10) : '',
+          endDate:     t.endDate     ? new Date(t.endDate).toISOString().slice(0, 10)   : '',
+          budget:      t.budget      ? Number(t.budget) : 0,
+          currency:    t.currency    ?? 'INR',
+          travelers:   t.travelers   ?? 1,
+          preferences: t.preferences ?? [],
+          stops:       [],
+        };
+
+        chatSessionId.current = crypto.randomUUID();
+        savedTripId.current   = t._id ?? tripId;
+        setTripData(values);
+
+        // Restore saved API results — skip live re-fetching
+        if (t.itineraryData) { setItinerary(t.itineraryData); setItineraryState('done'); }
+        else                 { setItineraryState('error'); }
+
+        if (t.routeData) { setRouteResult(t.routeData as RouteResult); setRouteState('done'); }
+        else              { setRouteState('idle'); }
+
+        if (t.weatherData && Array.isArray(t.weatherData) && t.weatherData.length > 0) {
+          setWeather(t.weatherData as DailyWeather[]);
+          setWeatherState('done');
+        } else {
+          setWeatherState('idle');
+        }
+
+        if (t.newsData) { setTravelNews(t.newsData as TravelNews); setNewsState('done'); }
+        else             { setNewsState('idle'); }
+
+        setSaveState('saved');   // already in DB — no need to re-save
+        setSubmitted(true);
+        setRestoring(false);
+      })
+      .catch((err: Error) => {
+        console.error('[restore trip]', err);
+        setRestoreError(err.message);
+        setRestoring(false);
+        hasFetched.current = false;  // allow replanning
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripId, status]);
 
   /* ── Server-side POI proxy (avoids browser CORS) ─────────────────────── */
   const fetchPOI = useCallback(async (lat: number, lon: number, mode: 'hotels' | 'spots'): Promise<POI[]> => {
@@ -244,6 +313,7 @@ export default function PlanTripPage() {
       itineraryData: itinerary,
       routeData:     routeResult,
       weatherData:   weather,
+      newsData:      travelNews ?? undefined,
     };
 
     fetch('/api/trips', {
@@ -279,6 +349,35 @@ export default function PlanTripPage() {
     );
   }
   if (status === 'unauthenticated') return <SignInRequired />;
+
+  /* ── Restoring saved trip ─────────────────────────────────────────────── */
+  if (restoring) {
+    return (
+      <div style={{ minHeight: 'calc(100vh - 52px)', background: '#0a0a0b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+          <div style={{ width: 48, height: 48, borderRadius: '50%', border: '3px solid rgba(59,130,246,.15)', borderTopColor: '#3b82f6', animation: 'spin .7s linear infinite' }} />
+          <p style={{ fontSize: 14, color: '#a1a1aa', fontWeight: 600 }}>Loading your saved trip…</p>
+          <p style={{ fontSize: 12, color: '#52525b' }}>Restoring itinerary, route and weather data</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (restoreError) {
+    return (
+      <div style={{ minHeight: 'calc(100vh - 52px)', background: '#0a0a0b', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ textAlign: 'center', maxWidth: 400 }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fafafa', marginBottom: 10 }}>Could not load trip</h2>
+          <p style={{ fontSize: 14, color: '#71717a', marginBottom: 24 }}>{restoreError}</p>
+          <button onClick={() => { setRestoreError(null); hasFetched.current = false; }}
+            style={{ padding: '10px 24px', background: '#3b82f6', border: 'none', borderRadius: 9, color: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}
+          >Back to Planner</button>
+        </div>
+      </div>
+    );
+  }
 
   void session;
 
@@ -709,5 +808,17 @@ export default function PlanTripPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function PlanTripPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ minHeight: 'calc(100vh - 52px)', background: '#0a0a0b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 40, height: 40, borderRadius: '50%', border: '3px solid rgba(59,130,246,.2)', borderTopColor: '#3b82f6', animation: 'spin .7s linear infinite' }} />
+      </div>
+    }>
+      <PlanTripPageInner />
+    </Suspense>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSession, signIn } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
@@ -53,9 +54,11 @@ function TransportBadge({ mode }: { mode: string }) {
 
 /* ── Trip card ─────────────────────────────────────────────────────────── */
 function TripCard({ trip, onDelete }: { trip: SavedTrip; onDelete: (id: string) => void }) {
-  const [expanded,  setExpanded]  = useState(false);
-  const [deleting,  setDeleting]  = useState(false);
-  const [confirmDel, setConfirmDel] = useState(false);
+  const router = useRouter();
+  const [expanded,    setExpanded]    = useState(false);
+  const [deleting,    setDeleting]    = useState(false);
+  const [confirmDel,  setConfirmDel]  = useState(false);
+  const [navigating,  setNavigating]  = useState(false);
 
   const days = trip.startDate && trip.endDate
     ? Math.max(1, Math.ceil((new Date(trip.endDate).getTime() - new Date(trip.startDate).getTime()) / 86400000))
@@ -97,7 +100,32 @@ function TripCard({ trip, onDelete }: { trip: SavedTrip; onDelete: (id: string) 
             <p style={{ fontSize: 11, color: '#52525b' }}>Saved on {savedOn}</p>
           </div>
           {/* Action buttons */}
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+            {/* Open in Planner */}
+            <button
+              onClick={() => { setNavigating(true); router.push(`/plan-trip?tripId=${trip._id}`); }}
+              disabled={navigating}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '5px 12px', borderRadius: 7,
+                border: '1px solid rgba(59,130,246,0.35)',
+                background: navigating ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.08)',
+                color: '#93c5fd', fontSize: 11, fontWeight: 600,
+                cursor: navigating ? 'not-allowed' : 'pointer',
+                transition: 'all 0.15s', fontFamily: 'inherit',
+              }}
+              onMouseEnter={(e) => { if (!navigating) e.currentTarget.style.background = 'rgba(59,130,246,0.18)'; }}
+              onMouseLeave={(e) => { if (!navigating) e.currentTarget.style.background = 'rgba(59,130,246,0.08)'; }}
+            >
+              {navigating ? (
+                <>
+                  <span style={{ width: 10, height: 10, borderRadius: '50%', border: '1.5px solid rgba(147,197,253,0.3)', borderTopColor: '#93c5fd', animation: 'spin .6s linear infinite', display: 'inline-block' }} />
+                  Opening…
+                </>
+              ) : '✈ Open in Planner'}
+            </button>
+
+            {/* Delete */}
             {confirmDel ? (
               <>
                 <button onClick={() => setConfirmDel(false)} style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid #27272a', background: 'transparent', color: '#71717a', fontSize: 11, cursor: 'pointer' }}>Cancel</button>
