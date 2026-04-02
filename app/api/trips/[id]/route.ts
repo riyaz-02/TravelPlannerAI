@@ -13,7 +13,7 @@ function getUserId(session: Awaited<ReturnType<typeof getServerSession>>): strin
 /* ── GET /api/trips/[id] ─────────────────────────────────────────────────── */
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getServerSession(authOptions);
   const userId  = getUserId(session);
@@ -24,7 +24,8 @@ export async function GET(
 
   try {
     await dbConnect();
-    const trip = await Trip.findOne({ _id: params.id, userId }).lean();
+    const { id } = await params;          // Next.js 15: params is async
+    const trip = await Trip.findOne({ _id: id, userId }).lean();
     if (!trip) {
       return NextResponse.json({ error: 'Trip not found.' }, { status: 404 });
     }

@@ -6,15 +6,50 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
 
+/* ── Icon set (SVG only, no emojis) ────────────────────────────────────── */
+function IconHistory() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+      <path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>
+    </svg>
+  );
+}
+function IconBarChart() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="20" x2="18" y2="10"/>
+      <line x1="12" y1="20" x2="12" y2="4"/>
+      <line x1="6"  y1="20" x2="6"  y2="14"/>
+    </svg>
+  );
+}
+function IconPlane() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/>
+    </svg>
+  );
+}
+function IconLogOut() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+      <polyline points="16 17 21 12 16 7"/>
+      <line x1="21" y1="12" x2="9" y2="12"/>
+    </svg>
+  );
+}
+
 /* ── User dropdown ──────────────────────────────────────────────────────── */
 function UserDropdown({ onClose }: { onClose: () => void }) {
   const { data: session } = useSession();
   const pathname = usePathname();
 
   const menuItems = [
-    { href: '/plan-history', icon: '📋', label: 'Plan History',  sub: 'View your saved trips' },
-    { href: '/analytics',    icon: '📊', label: 'Analytics',     sub: 'Your travel insights'  },
-    { href: '/plan-trip',    icon: '✈️', label: 'Plan New Trip', sub: 'Generate an itinerary' },
+    { href: '/plan-history', Icon: IconHistory, label: 'Plan History',  sub: 'View your saved trips' },
+    { href: '/analytics',    Icon: IconBarChart, label: 'Analytics',    sub: 'Your travel insights'  },
+    { href: '/plan-trip',    Icon: IconPlane,    label: 'Plan New Trip', sub: 'Generate an itinerary' },
   ];
 
   return (
@@ -59,7 +94,7 @@ function UserDropdown({ onClose }: { onClose: () => void }) {
 
       {/* Menu items */}
       <div style={{ padding: '6px 0' }}>
-        {menuItems.map(({ href, icon, label, sub }) => (
+        {menuItems.map(({ href, Icon, label, sub }) => (
           <Link
             key={href}
             href={href}
@@ -68,7 +103,7 @@ function UserDropdown({ onClose }: { onClose: () => void }) {
           >
             <div
               style={{
-                display: 'flex', alignItems: 'center', gap: 10,
+                display: 'flex', alignItems: 'center', gap: 11,
                 padding: '9px 16px',
                 transition: 'background 0.12s',
                 background: pathname === href ? 'rgba(59,130,246,0.08)' : 'transparent',
@@ -77,7 +112,15 @@ function UserDropdown({ onClose }: { onClose: () => void }) {
               onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.05)')}
               onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.background = pathname === href ? 'rgba(59,130,246,0.08)' : 'transparent')}
             >
-              <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+              {/* SVG icon container */}
+              <span style={{
+                width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: pathname === href ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.05)',
+                color: pathname === href ? '#93c5fd' : '#71717a',
+              }}>
+                <Icon />
+              </span>
               <div>
                 <p style={{ fontSize: 13, fontWeight: 500, color: pathname === href ? '#93c5fd' : '#fafafa', marginBottom: 1 }}>{label}</p>
                 <p style={{ fontSize: 11, color: '#52525b' }}>{sub}</p>
@@ -92,14 +135,20 @@ function UserDropdown({ onClose }: { onClose: () => void }) {
         <button
           onClick={() => { signOut(); onClose(); }}
           style={{
-            width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+            width: '100%', display: 'flex', alignItems: 'center', gap: 11,
             padding: '9px 16px', background: 'none', border: 'none',
             cursor: 'pointer', fontFamily: 'inherit', transition: 'background 0.12s',
           }}
           onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.08)')}
           onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.background = 'none')}
         >
-          <span style={{ fontSize: 16, width: 22, textAlign: 'center', flexShrink: 0 }}>🚪</span>
+          <span style={{
+            width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(239,68,68,0.08)', color: '#f87171',
+          }}>
+            <IconLogOut />
+          </span>
           <div style={{ textAlign: 'left' }}>
             <p style={{ fontSize: 13, fontWeight: 500, color: '#fca5a5' }}>Sign Out</p>
             <p style={{ fontSize: 11, color: '#52525b' }}>End your session</p>
@@ -164,7 +213,7 @@ export default function Navbar() {
         }}>
           {/* Logo */}
           <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 9, textDecoration: 'none' }}>
-            <div style={{ width: 28, height: 28, borderRadius: 7, background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #3b82f6, #6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
                 <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
               </svg>
@@ -174,8 +223,8 @@ export default function Navbar() {
 
           {/* Desktop nav links */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} className="hidden-mobile">
-            <Link href="/"          style={linkStyle('/')}>Home</Link>
-            <Link href="/plan-trip" style={linkStyle('/plan-trip')}>Plan Trip</Link>
+            <Link href="/"           style={linkStyle('/')}>Home</Link>
+            <Link href="/plan-trip"  style={linkStyle('/plan-trip')}>Plan Trip</Link>
             {session && <Link href="/plan-history" style={linkStyle('/plan-history')}>Plan History</Link>}
             {session && <Link href="/analytics"    style={linkStyle('/analytics')}>Analytics</Link>}
           </div>
@@ -276,10 +325,10 @@ export default function Navbar() {
                     )}
                     <span style={{ fontSize: 13, color: '#71717a' }}>{session.user?.name}</span>
                   </div>
-                  <button onClick={() => signOut()} style={{ background: 'none', border: 'none', fontSize: 13, color: '#52525b', cursor: 'pointer', padding: 0 }}>Sign out</button>
+                  <button onClick={() => signOut()} style={{ background: 'none', border: 'none', fontSize: 13, color: '#52525b', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>Sign out</button>
                 </>
               ) : (
-                <button onClick={() => signIn('google')} className="btn-primary" style={{ width: '100%', padding: '9px 16px', fontSize: 13 }}>Sign in with Google</button>
+                <button onClick={() => signIn('google')} className="btn-primary" style={{ width: '100%', padding: '9px 16px', fontSize: 13, fontFamily: 'inherit' }}>Sign in with Google</button>
               )}
             </div>
           </div>

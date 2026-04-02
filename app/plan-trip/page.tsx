@@ -45,11 +45,11 @@ const COLORS = ['#3b82f6','#0ea5e9','#06b6d4','#10b981','#8b5cf6','#f59e0b','#ec
 
 /* ── POI type labels ──────────────────────────────────────────────────────── */
 const POI_TYPE_LABELS: Record<string, string> = {
-  hotel: '🏨 Hotel', hostel: '🛏 Hostel', motel: '🏩 Motel', guest_house: '🏡 Guesthouse',
-  attraction: '🎯 Attraction', museum: '🏛 Museum', viewpoint: '🌄 Viewpoint',
-  artwork: '🎨 Artwork', theme_park: '🎡 Theme Park', zoo: '🦁 Zoo',
-  monument: '🗿 Monument', ruins: '🏚 Ruins', gallery: '🖼 Gallery',
-  amphitheatre: '🎭 Theatre', fort: '🏰 Fort',
+  hotel: 'Hotel', hostel: 'Hostel', motel: 'Motel', guest_house: 'Guesthouse',
+  attraction: 'Attraction', museum: 'Museum', viewpoint: 'Viewpoint',
+  artwork: 'Artwork', theme_park: 'Theme Park', zoo: 'Zoo',
+  monument: 'Monument', ruins: 'Ruins', gallery: 'Gallery',
+  amphitheatre: 'Theatre', fort: 'Fort',
 };
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
@@ -69,23 +69,30 @@ function Spinner({ color = '#3b82f6', size = 16 }: { color?: string; size?: numb
 
 /* ── Sign-in required screen ─────────────────────────────────────────────── */
 function SignInRequired() {
+  const features = [
+    { path: 'M9.663 17h4.673M12 3v1m6.364 1.636-.707.707M21 12h-1M4 12H3m3.343-5.657-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z', label: 'AI-generated itineraries', sub: 'Powered by Gemini 2.5 Flash' },
+    { path: 'M7 16a4 4 0 0 1-.88-7.903A5 5 0 1 1 15.9 6L16 6a5 5 0 0 1 1 9.9M9 19l3 3m0 0 3-3m-3 3V10', label: 'Trip history saved to cloud', sub: 'Access from anywhere' },
+    { path: 'M9 19v-6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2zm0 0V9a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v10m-6 0a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2m0 0V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z', label: 'Personal analytics dashboard', sub: 'See your travel patterns' },
+    { path: 'M9 20l-5.447-2.724A1 1 0 0 1 3 16.382V5.618a1 1 0 0 1 1.447-.894L9 7m0 13 6-3m-6 3V7m6 10 4.553 2.276A1 1 0 0 0 21 18.382V7.618a1 1 0 0 0-.553-.894L15 4m0 13V4m0 0L9 7', label: 'Multi-stop route optimizer', sub: 'TSP algorithm saves you km' },
+  ];
   return (
     <div style={{ minHeight: 'calc(100vh - 52px)', background: '#0a0a0b', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
       <div style={{ maxWidth: 480, width: '100%', textAlign: 'center' }}>
-        <div style={{ width: 80, height: 80, borderRadius: 20, background: 'linear-gradient(135deg, rgba(59,130,246,.2), rgba(139,92,246,.2))', border: '1px solid rgba(59,130,246,.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 28px', fontSize: 36 }}>✈️</div>
+        <div style={{ width: 80, height: 80, borderRadius: 20, background: 'linear-gradient(135deg, rgba(59,130,246,.2), rgba(139,92,246,.2))', border: '1px solid rgba(59,130,246,.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 28px' }}>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/>
+          </svg>
+        </div>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fafafa', letterSpacing: '-0.02em', marginBottom: 12 }}>Sign in to plan your trip</h1>
         <p style={{ fontSize: 15, color: '#71717a', lineHeight: 1.7, marginBottom: 32 }}>
           Create a free account to generate AI-powered itineraries, save your trip history, and access your travel analytics dashboard.
         </p>
         <div style={{ background: '#111113', border: '1px solid #27272a', borderRadius: 14, padding: '20px 24px', marginBottom: 28, textAlign: 'left' }}>
-          {[
-            { icon: '🤖', label: 'AI-generated itineraries',    sub: 'Powered by Gemini 2.5 Flash' },
-            { icon: '💾', label: 'Trip history saved to cloud',  sub: 'Access from anywhere'         },
-            { icon: '📊', label: 'Personal analytics dashboard', sub: 'See your travel patterns'     },
-            { icon: '🗺️', label: 'Multi-stop route optimizer',   sub: 'TSP algorithm saves you km'  },
-          ].map(({ icon, label, sub }) => (
+          {features.map(({ path, label, sub }) => (
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 0', borderBottom: '1px solid #1c1c1f' }}>
-              <span style={{ fontSize: 20, width: 28, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+              <span style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d={path}/></svg>
+              </span>
               <div>
                 <p style={{ fontSize: 13, fontWeight: 600, color: '#fafafa', marginBottom: 2 }}>{label}</p>
                 <p style={{ fontSize: 11, color: '#52525b' }}>{sub}</p>
@@ -155,6 +162,17 @@ function PlanTripPageInner() {
   const hasFetched    = useRef(false);
 
   /* ── Restore saved trip from ?tripId= param ───────────────────────────── */
+  // Reset the guard whenever tripId changes so every navigation from Plan
+  // History triggers a fresh restore (not blocked by a stale ref).
+  useEffect(() => {
+    if (tripId) {
+      hasFetched.current = false;
+      setSubmitted(false);
+      setRestoreError(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripId]);
+
   useEffect(() => {
     if (!tripId || hasFetched.current || status !== 'authenticated') return;
     hasFetched.current = true;
@@ -368,7 +386,9 @@ function PlanTripPageInner() {
     return (
       <div style={{ minHeight: 'calc(100vh - 52px)', background: '#0a0a0b', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <div style={{ textAlign: 'center', maxWidth: 400 }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+          <div style={{ width: 56, height: 56, borderRadius: 14, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="1.75" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
           <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fafafa', marginBottom: 10 }}>Could not load trip</h2>
           <p style={{ fontSize: 14, color: '#71717a', marginBottom: 24 }}>{restoreError}</p>
           <button onClick={() => { setRestoreError(null); hasFetched.current = false; }}
@@ -428,20 +448,23 @@ function PlanTripPageInner() {
     if (saveState === 'idle') return null;
     if (saveState === 'saving') return (
       <span style={{ fontSize: 12, padding: '4px 12px', borderRadius: 99, background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', color: '#93c5fd', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        ⏳ Saving to cloud…
+        <span style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgba(147,197,253,0.3)', borderTopColor: '#93c5fd', animation: 'spin .6s linear infinite', display: 'inline-block', flexShrink: 0 }} />
+        Saving to cloud…
       </span>
     );
     if (saveState === 'saved') return (
       <span style={{ fontSize: 12, padding: '4px 12px', borderRadius: 99, background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.25)', color: '#4ade80', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        ✓ Saved to Plan History
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        Saved to Plan History
       </span>
     );
     if (saveState === 'error') return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         <span style={{ fontSize: 12, padding: '4px 12px', borderRadius: 99, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          ⚠ Save failed
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/><circle cx="12" cy="12" r="10"/></svg>
+          Save failed
         </span>
-        <button onClick={retrySave} style={{ fontSize: 11, background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', textAlign: 'left', padding: '2px 0' }}>
+        <button onClick={retrySave} style={{ fontSize: 11, background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', textAlign: 'left', padding: '2px 0', fontFamily: 'inherit' }}>
           Retry save →
         </button>
         <span style={{ fontSize: 10, color: '#52525b', lineHeight: 1.4 }}>
@@ -672,8 +695,8 @@ function PlanTripPageInner() {
           <Card title="Explore Near Destination">
             <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
               {([
-                { label: '🏨 Hotels',        mode: 'hotels' as const, state: hotelsState, set: setHotelsState, setData: setHotels },
-                { label: '🎯 Tourist Spots', mode: 'spots'  as const, state: spotsState,  set: setSpotsState,  setData: setSpots  },
+                { label: 'Hotels',        mode: 'hotels' as const, state: hotelsState, set: setHotelsState, setData: setHotels },
+                { label: 'Tourist Spots', mode: 'spots'  as const, state: spotsState,  set: setSpotsState,  setData: setSpots  },
               ]).map(({ label, mode, state, set, setData }) => (
                 <button key={label}
                   onClick={async () => {
